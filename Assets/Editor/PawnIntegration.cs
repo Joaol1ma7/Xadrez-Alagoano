@@ -26,6 +26,8 @@ public static class PawnIntegration
             if (command == "inspect") Inspect();
             else if (command == "apply") Apply();
             else if (command == "verify") Verify();
+            else if (command == "applyrooks") ApplyRooks();
+            else if (command == "save") { EditorSceneManager.SaveScene(EditorSceneManager.GetActiveScene()); Inspect(); }
         }
         catch (Exception e) { File.WriteAllText(Work + "unity-error.txt", e.ToString()); Debug.LogException(e); }
     }
@@ -180,7 +182,61 @@ public static class PawnIntegration
         }
         catch { Undo.RevertAllDownToGroup(group); throw; }
     }
-    static void VerifyAgainst(Baseline baseline)
+    static void ApplyRooks()
+    {
+        if(EditorApplication.isPlaying) throw new Exception("Exit Play Mode first");
+        var baseline=JsonUtility.FromJson<Baseline>(File.ReadAllText(Work+"unity-baseline.json"));
+        VerifyAgainst(baseline);
+        var rooks=Pieces().Where(p=>p.tipo==TipoPeca.Torre).ToArray();
+        if(rooks.Length!=4 || rooks.Count(p=>p.equipe==Equipe.Branca)!=2 || rooks.Any(p=>p.transform.Find("Visual"))) throw new Exception("Unexpected rook structure");
+        const string rookPath="Assets/Models/Chess/Rook.fbx";
+        var importer=(ModelImporter)AssetImporter.GetAtPath(rookPath);
+        importer.globalScale=1; importer.importAnimation=false; importer.addCollider=false;
+        importer.materialImportMode=ModelImporterMaterialImportMode.None;
+        importer.SaveAndReimport();
+        var model=AssetDatabase.LoadAssetAtPath<GameObject>(rookPath);
+        var light=Wood("Rook_Wood","Assets/Chess MEGA-pack/Materials/LightOak/Oak.mat");
+        var dark=Wood("Rook_Wood_Dark","Assets/Chess MEGA-pack/Materials/DarkWood/DarkWood.mat");
+        EditorSceneManager.SaveScene(EditorSceneManager.GetActiveScene(),Work+"backup/SampleScene.live.before-rooks.unity",true);
+        Undo.IncrementCurrentGroup(); var group=Undo.GetCurrentGroup(); Undo.SetCurrentGroupName("Integrar torres modeladas");
+        try
+        {
+            foreach(var p in rooks)
+            {
+                var old=p.GetComponentsInChildren<Renderer>(true).Where(r=>r.enabled).ToArray();
+                var target=BoundsOf(old);
+                var visual=new GameObject("Visual"); Undo.RegisterCreatedObjectUndo(visual,"Adicionar Visual");
+                visual.transform.SetParent(p.transform,false);
+                var instance=(GameObject)PrefabUtility.InstantiatePrefab(model,visual.transform);
+                Undo.RegisterCreatedObjectUndo(instance,"Adicionar Rook_Modelado"); instance.name="Rook_Modelado";
+                var rs=instance.GetComponentsInChildren<Renderer>(true);
+                foreach(var r in rs)
+                {
+                    Undo.RecordObject(r,"Madeira da torre");
+                    r.sharedMaterials=Enumerable.Repeat(p.equipe==Equipe.Branca?light:dark,r.sharedMaterials.Length).ToArray();
+                    PrefabUtility.RecordPrefabInstancePropertyModifications(r);
+                }
+                var source=BoundsOf(rs);
+                var scale=Mathf.Min(target.size.x/source.size.x,target.size.y/source.size.y,target.size.z/source.size.z);
+                visual.transform.localScale=Vector3.one*scale;
+                var fitted=BoundsOf(rs);
+                visual.transform.position+=new Vector3(target.center.x-fitted.center.x,target.min.y-fitted.min.y,target.center.z-fitted.center.z);
+                foreach(var r in old) { Undo.RecordObject(r,"Ocultar visual original da torre"); r.enabled=false; PrefabUtility.RecordPrefabInstancePropertyModifications(r); }
+                PrefabUtility.RecordPrefabInstancePropertyModifications(instance.transform);
+                PrefabUtility.RecordPrefabInstancePropertyModifications(instance);
+            }
+            VerifyAgainst(baseline,true);
+            AssetDatabase.SaveAssets(); EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+            EditorSceneManager.SaveScene(EditorSceneManager.GetActiveScene()); Undo.CollapseUndoOperations(group);
+            File.WriteAllText(Work+"rooks-applied.txt","PASS: 4 rook visuals integrated and saved; 32 logical objects, all scripts, colliders and prefab links preserved.");
+            Selection.activeGameObject=rooks.First(p=>p.equipe==Equipe.Branca).gameObject;
+            var view=SceneView.lastActiveSceneView;
+            if(view) { view.rotation=Quaternion.Euler(25,40,0); view.Frame(BoundsOf(Selection.activeGameObject.GetComponentsInChildren<Renderer>().Where(r=>r.enabled)),false); }
+            Inspect();
+        }
+        catch { Undo.RevertAllDownToGroup(group); throw; }
+    }
+    static void VerifyAgainst(Baseline baseline, bool rooks=false)
     {
         var all=Pieces();
         if(all.Length!=baseline.pieces.Length) throw new Exception("Piece count changed");
@@ -192,9 +248,9 @@ public static class PawnIntegration
                 throw new Exception("Logical/collider/prefab data changed: "+original.hierarchy);
             if(snap.transformData!=original.transformData)
                 throw new Exception("Logical transform changed: "+original.hierarchy);
-            if(p.tipo==TipoPeca.Peao)
+            if(p.tipo==TipoPeca.Peao || (rooks && p.tipo==TipoPeca.Torre))
             {
-                var visual=p.transform.Find("Visual/Pawn_Modelado");
+                var visual=p.transform.Find("Visual/"+(p.tipo==TipoPeca.Peao?"Pawn_Modelado":"Rook_Modelado"));
                 if(!visual || visual.GetComponentsInChildren<Collider>(true).Length!=0) throw new Exception("Invalid visual structure");
                 if(p.GetComponentsInChildren<Renderer>(true).Count(r=>r.enabled)!=1) throw new Exception("Unexpected visible renderer count");
                 var b=BoundsOf(visual.GetComponentsInChildren<Renderer>());
@@ -202,11 +258,13 @@ public static class PawnIntegration
                     throw new Exception("Visual does not fit previous footprint");
             }
         }
-        File.WriteAllText(Work+"unity-verified.txt","PASS: 32 logical pieces unchanged; 16 new visuals; all collider properties, team/type data and prefab links preserved; bases and footprints match.");
+        File.WriteAllText(Work+"unity-verified.txt","PASS: 32 logical pieces unchanged; 16 pawn visuals"+(rooks?" and 4 rook visuals":"")+"; all collider properties, team/type data and prefab links preserved; bases and footprints match.");
     }
     static void Verify()
     {
-        VerifyAgainst(JsonUtility.FromJson<Baseline>(File.ReadAllText(Work+"unity-baseline.json")));
+        var rookCount=Pieces().Count(p=>p.tipo==TipoPeca.Torre && p.transform.Find("Visual/Rook_Modelado"));
+        if(rookCount!=0 && rookCount!=4) throw new Exception("Unexpected rook visual count");
+        VerifyAgainst(JsonUtility.FromJson<Baseline>(File.ReadAllText(Work+"unity-baseline.json")),rookCount==4);
         Inspect();
     }
 }
