@@ -6,6 +6,10 @@ public class SeletorDePecas : MonoBehaviour
     private GameObject pecaSelecionada = null;
     public float tempoDeMovimento = 0.5f;
 
+    [Header("Som de movimento")]
+    [SerializeField] private AudioSource fonteDeAudio;
+    [SerializeField] private AudioClip somDeMovimento;
+
     // Nova variável de estado para controlar de quem é a vez (começa com as Brancas)
     public Equipe turnoAtual = Equipe.Branca;
 
@@ -132,5 +136,12 @@ else if (objetoClicado.CompareTag("piece") && pecaSelecionada != null)
             yield return null; 
         }
         peca.transform.position = destino;
+
+        // Só uma jogada concluída com deslocamento reproduz o efeito.
+        if ((destino - posicaoInicial).sqrMagnitude > 0.000001f &&
+            fonteDeAudio != null && somDeMovimento != null)
+        {
+            fonteDeAudio.PlayOneShot(somDeMovimento);
+        }
     }
 }
