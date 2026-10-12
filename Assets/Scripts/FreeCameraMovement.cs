@@ -14,7 +14,10 @@ public class FreeCameraMovement : MonoBehaviour
 
     void Update()
     {
-        if (Input.GetMouseButtonDown(1)) BeginLook();
+        // 0 btn esquerdo, 1 bn direito, 2 scroll 
+        if (Input.GetMouseButtonDown(1)) 
+            BeginLook();
+
         if (Input.GetMouseButtonUp(1) || Input.GetKeyDown(KeyCode.Escape)) EndLook();
 
         if (looking)
